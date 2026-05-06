@@ -7,6 +7,11 @@ export interface OCRProgress {
   progress: number; // 0-1
 }
 
+// True when a Gemini API key is configured via env
+export const isGeminiConfigured =
+  !!import.meta.env.VITE_GEMINI_API_KEY &&
+  !import.meta.env.VITE_GEMINI_API_KEY.startsWith('your_');
+
 export async function runOCR(
   imageFile: File | string,
   onProgress?: (p: OCRProgress) => void
@@ -108,4 +113,142 @@ function sharpenImageData(imgData: ImageData, w: number, h: number): void {
       }
     }
   }
+}
+
+// ─── Gemini OCR ───────────────────────────────────────────────────
+/**
+ * Send the receipt image to Gemini 2.0 Flash with a structured prompt
+ * and parse the JSON it returns directly into a Partial<Receipt>.
+ */
+export async function runGeminiOCR(
+  file: File,
+  onProgress?: (p: OCRProgress) => void
+): Promise<Partial<Receipt>> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string;
+  if (!apiKey || apiKey.startsWith('your_')) {
+    throw new Error('Gemini API key not configured.');
+  }
+
+  onProgress?.({ status: 'Mengompresi gambar...', progress: 0.1 });
+
+  // Convert file to base64 (JPEG, compressed for bandwidth)
+  const base64 = await fileToBase64Jpeg(file, 1600);
+
+  onProgress?.({ status: 'Mengirim ke Gemini AI...', progress: 0.3 });
+
+  const prompt = `You are a receipt parser. Extract ALL data from this restaurant/cafe receipt image and return ONLY valid JSON with this exact structure (no markdown, no explanation):
+{
+  "merchantName": "string",
+  "transactionDate": "string (DD-MM-YYYY or as shown)",
+  "items": [
+    { "name": "string", "qty": number, "unitPrice": number, "totalPrice": number }
+  ],
+  "subtotal": number,
+  "taxAmount": number,
+  "serviceAmount": number,
+  "discountAmount": number,
+  "grandTotal": number,
+  "currency": "IDR"
+}
+Rules:
+- All prices in plain integers (no separators), e.g. 35000 not 35,000
+- If a field is not present use 0 or ""
+- qty must be a positive integer, unitPrice = totalPrice / qty
+- Include every line item on the receipt`;
+
+  const body = {
+    contents: [{
+      parts: [
+        { text: prompt },
+        { inline_data: { mime_type: 'image/jpeg', data: base64 } },
+      ],
+    }],
+    generationConfig: { temperature: 0, maxOutputTokens: 2048 },
+  };
+
+  const res = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  );
+
+  onProgress?.({ status: 'Memproses respons Gemini...', progress: 0.8 });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: { message?: string } }).error?.message ?? `Gemini error ${res.status}`);
+  }
+
+  const json = await res.json() as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+  };
+
+  const raw = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  // Strip possible markdown fences
+  const clean = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+
+  onProgress?.({ status: 'Parsing hasil Gemini...', progress: 0.95 });
+
+  let parsed: Partial<Receipt>;
+  try {
+    const obj = JSON.parse(clean) as {
+      merchantName?: string;
+      transactionDate?: string;
+      items?: Array<{ name?: string; qty?: number; unitPrice?: number; totalPrice?: number }>;
+      subtotal?: number;
+      taxAmount?: number;
+      serviceAmount?: number;
+      discountAmount?: number;
+      grandTotal?: number;
+      currency?: string;
+    };
+    parsed = {
+      merchantName: obj.merchantName ?? '',
+      transactionDate: obj.transactionDate ?? '',
+      items: (obj.items ?? []).map((it, idx) => ({
+        id: `item_gemini_${Date.now()}_${idx}`,
+        name: it.name ?? '',
+        qty: it.qty ?? 1,
+        unitPrice: it.unitPrice ?? (it.totalPrice ?? 0),
+        totalPrice: it.totalPrice ?? 0,
+      })),
+      subtotal: obj.subtotal ?? 0,
+      taxAmount: obj.taxAmount ?? 0,
+      serviceAmount: obj.serviceAmount ?? 0,
+      discountAmount: obj.discountAmount ?? 0,
+      roundingAmount: 0,
+      grandTotal: obj.grandTotal ?? 0,
+      currency: obj.currency ?? 'IDR',
+    };
+  } catch {
+    throw new Error('Gemini returned invalid JSON. Try again or use Tesseract.');
+  }
+
+  onProgress?.({ status: 'Selesai!', progress: 1 });
+  return parsed;
+}
+
+/** Resize + compress image to JPEG base64 for Gemini upload. */
+function fileToBase64Jpeg(file: File, maxDim: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          if (w > h) { h = Math.round((h / w) * maxDim); w = maxDim; }
+          else { w = Math.round((w / h) * maxDim); h = maxDim; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+        // Remove the data:image/jpeg;base64, prefix
+        resolve(canvas.toDataURL('image/jpeg', 0.92).split(',')[1]);
+      };
+      img.onerror = reject;
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }

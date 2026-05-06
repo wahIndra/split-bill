@@ -718,6 +718,16 @@ input, textarea { font-family: inherit; outline: none; border: none; }
 .preview-remove:hover { background: var(--red); }
 .preview-actions { display: flex; flex-direction: column; gap: 10px; }
 .preview-filename { font-size: 13px; color: var(--text2); text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ocr-engine-toggle { display: flex; gap: 8px; }
+.ocr-engine-btn {
+  flex: 1; padding: 8px 12px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 600;
+  background: var(--surface); border: 1.5px solid var(--border); color: var(--text2);
+  transition: all 0.15s;
+}
+.ocr-engine-btn.active {
+  background: var(--accent-bg); border-color: var(--accent); color: var(--accent2);
+}
 .spin { animation: spin 0.7s linear infinite; }
 .ocr-progress-wrap {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);

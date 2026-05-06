@@ -1,9 +1,11 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { useBill } from '../context/BillContext';
-import { runOCR, preprocessImageForOCR } from '../utils/ocr';
+import { runOCR, runGeminiOCR, preprocessImageForOCR, isGeminiConfigured } from '../utils/ocr';
 import type { OCRProgress } from '../utils/ocr';
 import type { Receipt } from '../types';
 import { Camera, X, Loader2, CheckCircle, AlertCircle, ImageIcon } from 'lucide-react';
+
+type OCREngine = 'tesseract' | 'gemini';
 
 export default function UploadPage() {
   const { dispatch, navigate } = useBill();
@@ -13,6 +15,7 @@ export default function UploadPage() {
   const [ocrState, setOcrState] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [ocrProgress, setOcrProgress] = useState<OCRProgress>({ status: '', progress: 0 });
   const [errorMsg, setErrorMsg] = useState('');
+  const [engine, setEngine] = useState<OCREngine>(isGeminiConfigured ? 'gemini' : 'tesseract');
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
@@ -44,8 +47,13 @@ export default function UploadPage() {
     setOcrState('processing');
     setOcrProgress({ status: 'Mempersiapkan gambar...', progress: 0 });
     try {
-      const processedUrl = await preprocessImageForOCR(file);
-      const parsed = await runOCR(processedUrl, (p) => setOcrProgress(p));
+      let parsed: Partial<Receipt>;
+      if (engine === 'gemini') {
+        parsed = await runGeminiOCR(file, (p) => setOcrProgress(p));
+      } else {
+        const processedUrl = await preprocessImageForOCR(file);
+        parsed = await runOCR(processedUrl, (p) => setOcrProgress(p));
+      }
       const receipt: Receipt = {
         merchantName: parsed.merchantName ?? 'Unknown Merchant',
         transactionDate: parsed.transactionDate ?? new Date().toLocaleDateString('id-ID'),
@@ -97,6 +105,24 @@ export default function UploadPage() {
           {ocrState === 'idle' && (
             <div className="preview-actions">
               <p className="preview-filename">{file?.name}</p>
+
+              {isGeminiConfigured && (
+                <div className="ocr-engine-toggle">
+                  <button
+                    className={`ocr-engine-btn ${engine === 'gemini' ? 'active' : ''}`}
+                    onClick={() => setEngine('gemini')}
+                  >
+                    ✨ Gemini AI
+                  </button>
+                  <button
+                    className={`ocr-engine-btn ${engine === 'tesseract' ? 'active' : ''}`}
+                    onClick={() => setEngine('tesseract')}
+                  >
+                    🔍 Tesseract
+                  </button>
+                </div>
+              )}
+
               <button className="btn-primary btn-large" onClick={startOCR}>
                 <Loader2 size={18} className="spin" />
                 Ekstrak Data Resi
