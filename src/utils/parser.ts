@@ -91,8 +91,8 @@ export function parseReceiptText(rawText: string): Partial<Receipt> {
     const line = lines[i];
     const nextLine = lines[i + 1] || '';
 
-    // Merchant: first non-empty, non-address, non-date, non-number line in top 8 lines
-    if (!merchantDetected && i < 8 && !DATE_KW.test(line) && !/^[\d\W]/.test(line) && !ADDRESS_KW.test(line) && !/\d{3,}/.test(line) && !/^(table|pax|pos|op:|rcpt|cashier)/i.test(line)) {
+    // Merchant: first non-empty, non-address, non-date, non-number line in top 12 lines
+    if (!merchantDetected && i < 12 && !DATE_KW.test(line) && !/^[\d\W]/.test(line) && !ADDRESS_KW.test(line) && !/\d{3,}/.test(line) && !/^(table|pax|pos|op:|rcpt|cashier)/i.test(line)) {
       result.merchantName = line;
       merchantDetected = true;
       continue;
@@ -184,7 +184,7 @@ export function parseReceiptText(rawText: string): Partial<Receipt> {
       MONTH_NAMES.test(line) ||
       /^\d+\s+items?\b/i.test(line) ||
       /\d+\s+items?\b.*\d+\s+(produk|qty|pcs)\b/i.test(line) ||
-      /^(date|time\s*in?|server|table|cashier|purpose|pax|no|sales|tagihan|dicetak|rcpt|pos[\s:$]|op:|presettlement|this\s+is|less\s+waste|not\s+paid)/i.test(line) ||
+      /^(date|time\s*in?|server|table|cashier|purpose|pax|no|sales|tagihan|dicetak|rcpt|pos[\s:$]|op:|presettlement|this\s+is|less\s+waste|not\s+paid|total\s+item|total\s+qty)/i.test(line) ||
       /^[-=*\s]+$/.test(line) ||
       /^\(?\+?\d[\d\s()\-]{6,}$/.test(line) ||
       line.length < 3
@@ -193,8 +193,26 @@ export function parseReceiptText(rawText: string): Partial<Receipt> {
       continue;
     }
 
+    // Pattern: name line → standalone total line → "qty x @unitPrice" line
+    // e.g. "Nasi Rames\n42.000\n3x @14.000"  (OCR splits total to its own line)
+    if (!isFooterLine(line) && /^[\d.,]+\s*$/.test(nextLine)) {
+      const lineAfterNext = lines[i + 2] || '';
+      const qtyUnitOnL2 = ITEM_QTY_PRICE_LINE.exec(normalizeOCRLine(lineAfterNext));
+      if (qtyUnitOnL2) {
+        const total = parseIndonesianNumber(nextLine.trim());
+        const qty = parseInt(qtyUnitOnL2[1]);
+        const unitPrice = parseIndonesianNumber(qtyUnitOnL2[2]);
+        const name = line.replace(/[\d.,]+\s*$/, '').trim();
+        if (name && qty > 0 && total > 0) {
+          items.push(makeItem(name, qty, unitPrice > 0 ? unitPrice : total / qty, total));
+          i += 3;
+          continue;
+        }
+      }
+    }
+
     // Pattern: item name line, followed by "qty x @unitPrice" line
-    const qtyUnitMatch = ITEM_QTY_PRICE_LINE.exec(nextLine);
+    const qtyUnitMatch = ITEM_QTY_PRICE_LINE.exec(normalizeOCRLine(nextLine));
     if (qtyUnitMatch && !isFooterLine(line)) {
       // nextLine is "2x @15.000"
       const qty = parseInt(qtyUnitMatch[1]);
@@ -245,6 +263,19 @@ export function parseReceiptText(rawText: string): Partial<Receipt> {
       }
     }
 
+    // Fallback: single-space "Name Total" — OCR often drops alignment spaces.
+    // Require total ≥ 1,000 to avoid false positives on short number-only lines.
+    const loosMatch = /^(.+?)\s([\d.,]+)\s*$/.exec(line);
+    if (loosMatch) {
+      const name = loosMatch[1].trim();
+      const total = parseIndonesianNumber(loosMatch[2]);
+      if (!isFooterLine(name) && total >= 1000 && name.length > 2 && total < 10_000_000 && !/^\d+$/.test(name)) {
+        items.push(makeItem(name, 1, total, total));
+        i++;
+        continue;
+      }
+    }
+
     i++;
   }
 
@@ -269,6 +300,20 @@ export function parseReceiptText(rawText: string): Partial<Receipt> {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────
+/**
+ * Fix common OCR character misreads within number regions of a line.
+ * Targets the price part after '@' or 'x' where l→1, O→0 are frequent.
+ */
+function normalizeOCRLine(line: string): string {
+  return line
+    // After @ sign: fix l/I→1 and O→0 in the price token
+    .replace(/(@\s*)([\w.,]+)/g, (_, at, num) =>
+      at + num.replace(/[lI]/g, '1').replace(/[oO]/g, '0')
+    )
+    // Normalize multiply signs: ×, x, X before @
+    .replace(/(\d+)\s*[×xX]\s*@/g, '$1x @');
+}
+
 let _itemCounter = 1;
 function makeItem(name: string, qty: number, unitPrice: number, totalPrice: number): ReceiptItem {
   return {
