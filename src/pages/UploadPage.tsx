@@ -71,9 +71,12 @@ export default function UploadPage() {
       setOcrState('done');
       setTimeout(() => navigate('review'), 800);
     } catch (err) {
-      console.error(err);
+      console.error('[OCR Error]', err);
       setOcrState('error');
-      setErrorMsg('OCR gagal. Coba foto dengan pencahayaan lebih baik atau input manual.');
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMsg(engine === 'gemini'
+        ? `Gemini gagal: ${msg}`
+        : 'OCR gagal. Coba foto dengan pencahayaan lebih baik atau input manual.');
     }
   };
 

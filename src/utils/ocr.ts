@@ -166,6 +166,8 @@ Rules:
     generationConfig: { temperature: 0, maxOutputTokens: 2048 },
   };
 
+  onProgress?.({ status: 'Menunggu respons Gemini...', progress: 0.55 });
+
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
     { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
@@ -175,7 +177,8 @@ Rules:
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error((err as { error?: { message?: string } }).error?.message ?? `Gemini error ${res.status}`);
+    const detail = (err as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
+    throw new Error(`Gemini API error: ${detail}`);
   }
 
   const json = await res.json() as {
@@ -183,6 +186,7 @@ Rules:
   };
 
   const raw = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+  if (!raw) throw new Error('Gemini returned an empty response. Check your API key quota.');
   // Strip possible markdown fences
   const clean = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
 
