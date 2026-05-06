@@ -168,18 +168,24 @@ Rules:
 
   onProgress?.({ status: 'Menunggu respons Gemini...', progress: 0.55 });
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
-  );
+  // Try models in order: 1.5-flash (generous free tier) → 1.5-flash-8b (lightest free tier)
+  const MODELS = ['gemini-1.5-flash', 'gemini-1.5-flash-8b'];
+  let res: Response | null = null;
+  let lastError = '';
+  for (const model of MODELS) {
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+    );
+    if (r.ok) { res = r; break; }
+    const errJson = await r.json().catch(() => ({}));
+    lastError = (errJson as { error?: { message?: string } }).error?.message ?? `HTTP ${r.status}`;
+    // Only retry on quota errors
+    if (r.status !== 429 && r.status !== 403) throw new Error(`Gemini API error: ${lastError}`);
+  }
+  if (!res) throw new Error(`Gemini quota exceeded on all models. ${lastError}`);
 
   onProgress?.({ status: 'Memproses respons Gemini...', progress: 0.8 });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    const detail = (err as { error?: { message?: string } }).error?.message ?? `HTTP ${res.status}`;
-    throw new Error(`Gemini API error: ${detail}`);
-  }
 
   const json = await res.json() as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
