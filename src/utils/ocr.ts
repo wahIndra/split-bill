@@ -168,8 +168,8 @@ Rules:
 
   onProgress?.({ status: 'Menunggu respons Gemini...', progress: 0.55 });
 
-  // Try models in order: 1.5-flash (generous free tier) → 1.5-flash-8b (lightest free tier)
-  const MODELS = ['gemini-1.5-flash', 'gemini-1.5-flash-8b'];
+  // Try models in order of preference
+  const MODELS = ['gemini-1.5-flash-latest', 'gemini-flash-latest', 'gemini-1.5-flash-8b-latest'];
   let res: Response | null = null;
   let lastError = '';
   for (const model of MODELS) {
