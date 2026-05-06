@@ -168,29 +168,33 @@ Rules:
 
   onProgress?.({ status: 'Menunggu respons Gemini...', progress: 0.55 });
 
-  // Try multiple API versions + model names — availability varies by key/region
-  const ENDPOINTS = [
-    'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent',
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
-    'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-001:generateContent',
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent',
-    'https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash-8b:generateContent',
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent',
+  // Use header auth (matches the official quickstart curl format)
+  const headers = {
+    'Content-Type': 'application/json',
+    'X-goog-api-key': apiKey,
+  };
+
+  // Try models in order — gemini-flash-latest is what the v1beta quickstart uses
+  const MODELS = [
+    'gemini-flash-latest',
+    'gemini-2.0-flash-lite',
+    'gemini-2.0-flash-exp',
+    'gemini-2.0-flash',
+    'gemini-1.5-flash',
   ];
   let res: Response | null = null;
   let lastError = '';
-  for (const endpoint of ENDPOINTS) {
-    const r = await fetch(`${endpoint}?key=${apiKey}`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
+  for (const model of MODELS) {
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      { method: 'POST', headers, body: JSON.stringify(body) }
     );
     if (r.ok) { res = r; break; }
     const errJson = await r.json().catch(() => ({}));
     lastError = (errJson as { error?: { message?: string } }).error?.message ?? `HTTP ${r.status}`;
-    // Stop immediately on auth/billing errors
     if (r.status === 400 || r.status === 401) throw new Error(`Gemini API error: ${lastError}`);
-    // Continue trying on 404 (not found) or 429/403 (quota)
   }
-  if (!res) throw new Error(`Gemini: no working model found. Last error: ${lastError}`);
+  if (!res) throw new Error(`Gemini: no working model found. ${lastError}`);
 
   onProgress?.({ status: 'Memproses respons Gemini...', progress: 0.8 });
 
